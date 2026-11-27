@@ -1,6 +1,7 @@
 package com.projectanonymous.chatbot
 
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.content.Intent
 import android.os.Bundle
 import android.webkit.WebView
@@ -146,16 +147,11 @@ private fun ChatbotApp() {
         messages.add(message)
         localStore.saveMessage(message, currentConversationId)?.let { updated ->
             val index = conversations.indexOfFirst { it.id == updated.id }
-            if (index >= 0) conversations[index] = updated
+            if (index >= 0) conversations.removeAt(index)
+            conversations.add(0, updated)
         }
     }
 
-    fun startNewChat() {
-        val conversation = localStore.createConversation()
-        conversations.add(0, conversation)
-        currentConversationId = conversation.id
-        destination = AppDestination.CHAT
-    }
 
     fun persistReadPermission(uri: Uri) {
         try {
@@ -163,6 +159,15 @@ private fun ChatbotApp() {
         } catch (_: SecurityException) {
             // Some document providers do not offer persistable grants; keep the item visible but it may expire.
         }
+    }
+
+    fun resolveDisplayName(uri: Uri, fallback: String): String {
+        val providerName = runCatching {
+            appContext.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull()
+        return providerName?.takeIf { it.isNotBlank() } ?: uri.lastPathSegment ?: fallback
     }
 
     var input by remember { mutableStateOf("") }
@@ -176,6 +181,22 @@ private fun ChatbotApp() {
     var isGenerating by remember { mutableStateOf(false) }
     var generationStatus by remember { mutableStateOf("Siap") }
     var activeGeneration by remember { mutableStateOf<Job?>(null) }
+
+    fun cancelCurrentGeneration() {
+        activeGeneration?.cancel()
+        activeGeneration = null
+        isGenerating = false
+        showGoogleBrowser = false
+        generationStatus = "Dibatalkan"
+    }
+
+    fun startNewChat() {
+        cancelCurrentGeneration()
+        val conversation = localStore.createConversation()
+        conversations.add(0, conversation)
+        currentConversationId = conversation.id
+        destination = AppDestination.CHAT
+    }
 
     DisposableEffect(aiModeWebView) {
         onDispose {
@@ -192,7 +213,7 @@ private fun ChatbotApp() {
     ) { uri ->
         uri?.let {
             persistReadPermission(it)
-            val item = LibraryItem(uri = it, name = it.lastPathSegment ?: "Gambar", isImage = true)
+            val item = LibraryItem(uri = it, name = resolveDisplayName(it, "Gambar"), isImage = true)
             library.add(item)
             localStore.saveLibraryItem(item)
             pendingAttachments = pendingAttachments + item
@@ -203,7 +224,7 @@ private fun ChatbotApp() {
     ) { uri ->
         uri?.let {
             persistReadPermission(it)
-            val item = LibraryItem(uri = it, name = it.lastPathSegment ?: "File", isImage = false)
+            val item = LibraryItem(uri = it, name = resolveDisplayName(it, "File"), isImage = false)
             library.add(item)
             localStore.saveLibraryItem(item)
             pendingAttachments = pendingAttachments + item
@@ -312,13 +333,7 @@ private fun ChatbotApp() {
                     pendingAttachments = pendingAttachments,
                     isGenerating = isGenerating,
                     generationStatus = generationStatus,
-                    onStop = {
-                        activeGeneration?.cancel()
-                        activeGeneration = null
-                        isGenerating = false
-                        showGoogleBrowser = false
-                        generationStatus = "Dibatalkan"
-                    },
+                    onStop = { cancelCurrentGeneration() },
                     onRemoveAttachment = { item ->
                         pendingAttachments = pendingAttachments.filterNot { it.id == item.id }
                     },
@@ -383,8 +398,13 @@ private fun ChatbotApp() {
                     modifier = Modifier.fillMaxSize(),
                     conversations = conversations,
                     selectedId = currentConversationId,
-                    onSelect = { conversation -> currentConversationId = conversation.id; destination = AppDestination.CHAT },
+                    onSelect = { conversation ->
+                        cancelCurrentGeneration()
+                        currentConversationId = conversation.id
+                        destination = AppDestination.CHAT
+                    },
                     onDelete = { conversation ->
+                        if (currentConversationId == conversation.id) cancelCurrentGeneration()
                         localStore.deleteConversation(conversation.id)
                         conversations.remove(conversation)
                         if (currentConversationId == conversation.id) {
