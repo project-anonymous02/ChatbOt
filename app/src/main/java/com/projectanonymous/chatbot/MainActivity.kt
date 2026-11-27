@@ -343,21 +343,7 @@ private fun ChatbotApp() {
                     onPickFile = { filePicker.launch(arrayOf("*/*")) },
                     onSend = {
                         val prompt = input.trim()
-                        val recentContext = messages.takeLast(8)
-                        val contextualPrompt = buildString {
-                            if (recentContext.isNotEmpty()) {
-                                append("Recent conversation context (use as background, not as new requests):\n")
-                                recentContext.forEach { previous ->
-                                    append(if (previous.fromUser) "User: " else "Assistant: ")
-                                    append(previous.text.take(1_200))
-                                    append("\n")
-                                }
-                                append("\n")
-                            }
-                            append("Latest user request:\n")
-                            append(prompt)
-                            append("\nAnswer the latest user request. Use the previous turns only when relevant.")
-                        }.take(9_000)
+                        val contextualPrompt = ConversationPromptBuilder.build(messages, prompt)
                         if ((prompt.isNotEmpty() || pendingAttachments.isNotEmpty()) && !isGenerating) {
                             val attachmentNote = if (pendingAttachments.isNotEmpty()) {
                                 "\n\nLampiran dipilih (belum diteruskan ke Google AI Mode): " + pendingAttachments.joinToString { it.name }
