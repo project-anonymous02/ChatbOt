@@ -1,6 +1,7 @@
 package com.projectanonymous.chatbot
 
 import android.net.Uri
+import android.content.Intent
 import android.os.Bundle
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
@@ -72,6 +73,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -125,15 +127,24 @@ class MainActivity : ComponentActivity() {
 private fun ChatbotApp() {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    val messages = remember {
-        mutableStateListOf(
-            ChatMessage(
-                text = "Halo! ChatbOt siap menjadi antarmuka percakapanmu. Integrasi Google AI Mode sedang dalam tahap pengembangan.",
-                fromUser = false
-            )
-        )
+    val appContext = LocalContext.current.applicationContext
+    val localStore = remember { ChatLocalStore(appContext) }
+    val messages = remember { mutableStateListOf<ChatMessage>().apply { addAll(localStore.loadMessages()) } }
+    val library = remember { mutableStateListOf<LibraryItem>().apply { addAll(localStore.loadLibrary()) } }
+
+    fun appendMessage(message: ChatMessage) {
+        messages.add(message)
+        localStore.saveMessage(message)
     }
-    val library = remember { mutableStateListOf<LibraryItem>() }
+
+    fun persistReadPermission(uri: Uri) {
+        try {
+            appContext.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: SecurityException) {
+            // Some document providers do not offer persistable grants; keep the item visible but it may expire.
+        }
+    }
+
     var destination by remember { mutableStateOf(AppDestination.CHAT) }
     var input by remember { mutableStateOf("") }
     var attachmentMenu by remember { mutableStateOf(false) }
@@ -153,13 +164,18 @@ private fun ChatbotApp() {
             aiModeWebView?.destroy()
         }
     }
+    DisposableEffect(localStore) {
+        onDispose { localStore.close() }
+    }
 
     val imagePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let {
+            persistReadPermission(it)
             val item = LibraryItem(uri = it, name = it.lastPathSegment ?: "Gambar", isImage = true)
             library.add(item)
+            localStore.saveLibraryItem(item)
             pendingAttachments = pendingAttachments + item
         }
     }
@@ -167,8 +183,10 @@ private fun ChatbotApp() {
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         uri?.let {
+            persistReadPermission(it)
             val item = LibraryItem(uri = it, name = it.lastPathSegment ?: "File", isImage = false)
             library.add(item)
+            localStore.saveLibraryItem(item)
             pendingAttachments = pendingAttachments + item
         }
     }
@@ -196,7 +214,7 @@ private fun ChatbotApp() {
                         icon = { Icon(Icons.Filled.Edit, contentDescription = null) },
                         onClick = {
                             messages.clear()
-                            messages.add(ChatMessage(
+                            appendMessage(ChatMessage(
                                 text = "Percakapan baru. Integrasi Google AI Mode belum aktif.",
                                 fromUser = false
                             ))
@@ -260,7 +278,7 @@ private fun ChatbotApp() {
                         if (destination == AppDestination.CHAT) {
                             IconButton(onClick = {
                                 messages.clear()
-                                messages.add(ChatMessage(
+                                appendMessage(ChatMessage(
                                     text = "Percakapan baru. Integrasi Google AI Mode belum aktif.",
                                     fromUser = false
                                 ))
@@ -298,7 +316,7 @@ private fun ChatbotApp() {
                     },
                     attachmentMenu = attachmentMenu,
                     onAttachmentMenuChange = { attachmentMenu = it },
-                    onPickImage = { imagePicker.launch("image/*") },
+                    onPickImage = { imagePicker.launch(arrayOf("image/*")) },
                     onPickFile = { filePicker.launch(arrayOf("*/*")) },
                     onSend = {
                         val prompt = input.trim()
@@ -306,14 +324,14 @@ private fun ChatbotApp() {
                             val attachmentNote = if (pendingAttachments.isNotEmpty()) {
                                 "\n\nLampiran dipilih (belum diteruskan ke Google AI Mode): " + pendingAttachments.joinToString { it.name }
                             } else ""
-                            messages.add(ChatMessage(text = prompt + attachmentNote, fromUser = true))
+                            appendMessage(ChatMessage(text = prompt + attachmentNote, fromUser = true))
                             input = ""
                             pendingAttachments = emptyList()
                             val currentWebView = aiModeWebView
                             if (prompt.isBlank()) {
-                                messages.add(ChatMessage(text = "Tulis pertanyaan agar Google AI Mode dapat memprosesnya. Lampiran saja belum didukung.", fromUser = false))
+                                appendMessage(ChatMessage(text = "Tulis pertanyaan agar Google AI Mode dapat memprosesnya. Lampiran saja belum didukung.", fromUser = false))
                             } else if (currentWebView == null) {
-                                messages.add(ChatMessage(text = "Browser belum siap. Coba kirim ulang sebentar lagi.", fromUser = false))
+                                appendMessage(ChatMessage(text = "Browser belum siap. Coba kirim ulang sebentar lagi.", fromUser = false))
                             } else {
                                 isGenerating = true
                                 generationStatus = "Menghubungkan ke Google AI Mode…"
@@ -324,21 +342,19 @@ private fun ChatbotApp() {
                                             showGoogleBrowser = status.startsWith("Login Google")
                                         }
                                         val answer = result.response.answer
-                                        if (answer.isNotBlank() && result.response.completion == com.projectanonymous.chatbot.data.aimode.AiModeCompletion.CONFIRMED) {
+                                        if (answer.isNotBlank()) {
                                             val sources = result.response.citations.joinToString("\n") { citation ->
                                                 "• ${citation.title} (${citation.domain})\n  ${citation.url}"
                                             }
                                             val rendered = if (sources.isNotBlank()) "$answer\n\nSumber:\n$sources" else answer
-                                            messages.add(ChatMessage(text = rendered, fromUser = false))
-                                        } else if (answer.isNotBlank()) {
-                                            messages.add(ChatMessage(text = "Jawaban belum terkonfirmasi selesai. Potongan yang berhasil dibaca:\n\n$answer\n\nCoba kirim ulang untuk memperoleh hasil lengkap.", fromUser = false))
+                                            appendMessage(ChatMessage(text = rendered, fromUser = false))
                                         } else {
-                                            messages.add(ChatMessage(text = "Google belum memberikan jawaban yang dapat dibaca. Coba lagi, atau buka browser Google untuk memeriksa sesi dan halaman yang tampil.", fromUser = false))
+                                            appendMessage(ChatMessage(text = "Google belum memberikan jawaban yang dapat dibaca. Coba lagi, atau buka browser Google untuk memeriksa sesi dan halaman yang tampil.", fromUser = false))
                                         }
                                     } catch (cancelled: CancellationException) {
                                         throw cancelled
                                     } catch (error: Exception) {
-                                        messages.add(ChatMessage(text = "Gagal mengambil jawaban: ${error.message ?: "kesalahan tidak diketahui"}", fromUser = false))
+                                        appendMessage(ChatMessage(text = "Gagal mengambil jawaban: ${error.message ?: "kesalahan tidak diketahui"}", fromUser = false))
                                     } finally {
                                         isGenerating = false
                                         activeGeneration = null
@@ -353,7 +369,7 @@ private fun ChatbotApp() {
                 AppDestination.LIBRARY -> LibraryScreen(
                     modifier = Modifier.fillMaxSize(),
                     items = library,
-                    onDelete = { item -> library.remove(item) }
+                    onDelete = { item -> library.remove(item); localStore.deleteLibraryItem(item) }
                 )
                 AppDestination.HISTORY -> HistoryScreen(Modifier.fillMaxSize())
             }
@@ -455,7 +471,7 @@ private fun ChatScreen(
             )
         }
 
-        if (messages.size <= 1) {
+        if (messages.isEmpty()) {
             Box(
                 modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
                 contentAlignment = Alignment.Center
