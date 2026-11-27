@@ -368,7 +368,7 @@ private fun ChatbotApp() {
                                         val result = GoogleAiModeWebViewAdapter().ask(currentWebView, contextualPrompt) { status ->
                                             if (generationVersion == requestVersion) {
                                                 generationStatus = status
-                                                showGoogleBrowser = status.startsWith("Login Google")
+                                                showGoogleBrowser = status.startsWith("Login Google") || status.startsWith("Persetujuan Google") || status.startsWith("Verifikasi Google")
                                             }
                                         }
                                         if (generationVersion == requestVersion) {

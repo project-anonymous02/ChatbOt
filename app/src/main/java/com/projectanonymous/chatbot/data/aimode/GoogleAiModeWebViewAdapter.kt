@@ -90,7 +90,7 @@ class GoogleAiModeWebViewAdapter(
                           return JSON.stringify({
                             html: root ? root.innerHTML : '',
                             url: location.href,
-                            blocked: body.includes('unusual traffic') || location.pathname.includes('/sorry/'),
+                            blocked: body.includes('unusual traffic') || body.includes('automated queries') || body.includes('verify you are not a robot') || location.pathname.includes('/sorry/'),
                             marker: !!(root && root.querySelector('.v4bSkd'))
                           });
                         })();
@@ -104,7 +104,8 @@ class GoogleAiModeWebViewAdapter(
                             val snapshot = JSONObject(decoded)
                             lastUrl = snapshot.optString("url", webView.url.orEmpty())
                             if (snapshot.optBoolean("blocked")) {
-                                fail(AiModeWebException("Google menampilkan halaman pembatasan atau verifikasi. Selesaikan langsung di browser Google, lalu coba lagi."))
+                                onProgress("Verifikasi Google diperlukan. Selesaikan langsung di halaman browser ini…")
+                                schedulePoll?.invoke(1_500L)
                                 return@evaluateJavascript
                             }
 
@@ -131,17 +132,31 @@ class GoogleAiModeWebViewAdapter(
             }
 
             webView.webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    if (!request.isForMainFrame) return false
+                    val host = request.url.host.orEmpty().lowercase()
+                    val googleOwned = host == "google.com" || host.endsWith(".google.com") ||
+                        Regex("(^|\\.)google\\.[a-z]{2,}(\\.[a-z]{2,})?$").matches(host)
+                    return !googleOwned
+                }
+
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
                     lastUrl = url
-                    if (url.contains("accounts.google.com", ignoreCase = true)) {
-                        onProgress("Login Google diperlukan. Selesaikan login di halaman browser ini…")
-                        schedulePoll?.invoke(1_200L)
-                    } else if (url.startsWith("https://www.google.", true) ||
-                        url.startsWith("https://google.", true)
-                    ) {
-                        onProgress("Membaca halaman Google AI Mode…")
-                        schedulePoll?.invoke(900L)
+                    val host = Uri.parse(url).host.orEmpty().lowercase()
+                    when {
+                        host == "accounts.google.com" -> {
+                            onProgress("Login Google diperlukan. Selesaikan login di halaman browser ini…")
+                            schedulePoll?.invoke(1_200L)
+                        }
+                        host == "consent.google.com" -> {
+                            onProgress("Persetujuan Google diperlukan. Selesaikan di halaman browser ini…")
+                            schedulePoll?.invoke(1_200L)
+                        }
+                        host == "google.com" || host.endsWith(".google.com") || host.matches(Regex("(^|\\.)google\\.[a-z]{2,}(\\.[a-z]{2,})?$")) -> {
+                            onProgress("Membaca halaman Google AI Mode…")
+                            schedulePoll?.invoke(900L)
+                        }
                     }
                 }
 
