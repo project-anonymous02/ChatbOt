@@ -392,7 +392,16 @@ private fun ChatbotApp() {
                 AppDestination.LIBRARY -> LibraryScreen(
                     modifier = Modifier.fillMaxSize(),
                     items = library,
-                    onDelete = { item -> library.remove(item); localStore.deleteLibraryItem(item) }
+                    onDelete = { item ->
+                        library.remove(item)
+                        pendingAttachments = pendingAttachments.filterNot { it.id == item.id }
+                        localStore.deleteLibraryItem(item)
+                        runCatching {
+                            if (library.none { it.uri == item.uri }) {
+                                appContext.contentResolver.releasePersistableUriPermission(item.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                        }
+                    }
                 )
                 AppDestination.HISTORY -> HistoryScreen(
                     modifier = Modifier.fillMaxSize(),
@@ -471,7 +480,7 @@ private fun ChatbotApp() {
         AlertDialog(
             onDismissRequest = { showCancelInfo = false },
             title = { Text("Status ChatbOt") },
-            text = { Text("UI percakapan sudah tersedia. Koneksi Google AI Mode, sinkronisasi percakapan, dan penyimpanan Library permanen belum diimplementasikan.") },
+            text = { Text("ChatbOt memakai integrasi UI Google AI Mode yang tidak resmi dan dapat berubah sewaktu-waktu. Riwayat serta Library disimpan lokal. Percakapan multi-turn Google dan upload lampiran langsung masih belum tersedia.") },
             confirmButton = {
                 Text(
                     "Mengerti",
@@ -540,7 +549,7 @@ private fun ChatScreen(
                     )
                     Spacer(Modifier.size(18.dp))
                     Text(
-                        "Jawaban AI belum tersedia sampai adapter Google AI Mode selesai dibuat.",
+                        "Pertanyaan akan diproses melalui sesi Google AI Mode di WebView. Integrasi ini tidak resmi dan bergantung pada struktur halaman Google.",
                         color = Color(0xFF777C87),
                         fontSize = 12.sp,
                         textAlign = TextAlign.Center
