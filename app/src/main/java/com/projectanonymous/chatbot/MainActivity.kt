@@ -181,8 +181,10 @@ private fun ChatbotApp() {
     var isGenerating by remember { mutableStateOf(false) }
     var generationStatus by remember { mutableStateOf("Siap") }
     var activeGeneration by remember { mutableStateOf<Job?>(null) }
+    var generationVersion by remember { mutableStateOf(0) }
 
     fun cancelCurrentGeneration() {
+        generationVersion += 1
         activeGeneration?.cancel()
         activeGeneration = null
         isGenerating = false
@@ -359,31 +361,44 @@ private fun ChatbotApp() {
                             } else {
                                 isGenerating = true
                                 generationStatus = "Menghubungkan ke Google AI Mode…"
+                                val requestVersion = generationVersion + 1
+                                generationVersion = requestVersion
                                 activeGeneration = scope.launch {
                                     try {
                                         val result = GoogleAiModeWebViewAdapter().ask(currentWebView, contextualPrompt) { status ->
-                                            generationStatus = status
-                                            showGoogleBrowser = status.startsWith("Login Google")
-                                        }
-                                        val answer = result.response.answer
-                                        if (answer.isNotBlank()) {
-                                            val sources = result.response.citations.joinToString("\n") { citation ->
-                                                "• ${citation.title} (${citation.domain})\n  ${citation.url}"
+                                            if (generationVersion == requestVersion) {
+                                                generationStatus = status
+                                                showGoogleBrowser = status.startsWith("Login Google")
                                             }
-                                            val rendered = if (sources.isNotBlank()) "$answer\n\nSumber:\n$sources" else answer
-                                            appendMessage(ChatMessage(text = rendered, fromUser = false))
-                                        } else {
-                                            appendMessage(ChatMessage(text = "Google belum memberikan jawaban yang dapat dibaca. Coba lagi, atau buka browser Google untuk memeriksa sesi dan halaman yang tampil.", fromUser = false))
+                                        }
+                                        if (generationVersion == requestVersion) {
+                                            val answer = result.response.answer
+                                            val isConfirmed = result.response.completion == com.projectanonymous.chatbot.data.aimode.AiModeCompletion.CONFIRMED
+                                            if (answer.isNotBlank() && isConfirmed) {
+                                                val sources = result.response.citations.joinToString("\n") { citation ->
+                                                    "• ${citation.title} (${citation.domain})\n  ${citation.url}"
+                                                }
+                                                val rendered = if (sources.isNotBlank()) "$answer\n\nSumber:\n$sources" else answer
+                                                appendMessage(ChatMessage(text = rendered, fromUser = false))
+                                            } else if (answer.isNotBlank()) {
+                                                appendMessage(ChatMessage(text = "Jawaban belum terkonfirmasi selesai. Potongan yang berhasil dibaca:\n\n$answer\n\nCoba kirim ulang untuk memperoleh hasil lengkap.", fromUser = false))
+                                            } else {
+                                                appendMessage(ChatMessage(text = "Google belum memberikan jawaban yang dapat dibaca. Coba lagi, atau buka browser Google untuk memeriksa sesi dan halaman yang tampil.", fromUser = false))
+                                            }
                                         }
                                     } catch (cancelled: CancellationException) {
                                         throw cancelled
                                     } catch (error: Exception) {
-                                        appendMessage(ChatMessage(text = "Gagal mengambil jawaban: ${error.message ?: "kesalahan tidak diketahui"}", fromUser = false))
+                                        if (generationVersion == requestVersion) {
+                                            appendMessage(ChatMessage(text = "Gagal mengambil jawaban: ${error.message ?: "kesalahan tidak diketahui"}", fromUser = false))
+                                        }
                                     } finally {
-                                        isGenerating = false
-                                        activeGeneration = null
-                                        showGoogleBrowser = false
-                                        generationStatus = "Siap"
+                                        if (generationVersion == requestVersion) {
+                                            isGenerating = false
+                                            activeGeneration = null
+                                            showGoogleBrowser = false
+                                            generationStatus = "Siap"
+                                        }
                                     }
                                 }
                             }
