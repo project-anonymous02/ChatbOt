@@ -129,12 +129,32 @@ private fun ChatbotApp() {
     val scope = rememberCoroutineScope()
     val appContext = LocalContext.current.applicationContext
     val localStore = remember { ChatLocalStore(appContext) }
-    val messages = remember { mutableStateListOf<ChatMessage>().apply { addAll(localStore.loadMessages()) } }
+    val conversations = remember {
+        mutableStateListOf<ChatConversation>().apply {
+            addAll(localStore.loadConversations())
+            if (isEmpty()) add(localStore.createConversation())
+        }
+    }
+    var destination by remember { mutableStateOf(AppDestination.CHAT) }
+    var currentConversationId by remember { mutableStateOf(conversations.first().id) }
+    val messages = remember(currentConversationId) {
+        mutableStateListOf<ChatMessage>().apply { addAll(localStore.loadMessages(currentConversationId)) }
+    }
     val library = remember { mutableStateListOf<LibraryItem>().apply { addAll(localStore.loadLibrary()) } }
 
     fun appendMessage(message: ChatMessage) {
         messages.add(message)
-        localStore.saveMessage(message)
+        localStore.saveMessage(message, currentConversationId)?.let { updated ->
+            val index = conversations.indexOfFirst { it.id == updated.id }
+            if (index >= 0) conversations[index] = updated
+        }
+    }
+
+    fun startNewChat() {
+        val conversation = localStore.createConversation()
+        conversations.add(0, conversation)
+        currentConversationId = conversation.id
+        destination = AppDestination.CHAT
     }
 
     fun persistReadPermission(uri: Uri) {
@@ -145,7 +165,6 @@ private fun ChatbotApp() {
         }
     }
 
-    var destination by remember { mutableStateOf(AppDestination.CHAT) }
     var input by remember { mutableStateOf("") }
     var attachmentMenu by remember { mutableStateOf(false) }
     var pendingAttachments by remember { mutableStateOf(listOf<LibraryItem>()) }
@@ -213,12 +232,7 @@ private fun ChatbotApp() {
                         selected = destination == AppDestination.CHAT,
                         icon = { Icon(Icons.Filled.Edit, contentDescription = null) },
                         onClick = {
-                            messages.clear()
-                            appendMessage(ChatMessage(
-                                text = "Percakapan baru. Integrasi Google AI Mode belum aktif.",
-                                fromUser = false
-                            ))
-                            destination = AppDestination.CHAT
+                            startNewChat()
                             scope.launch { drawerState.close() }
                         }
                     )
@@ -276,13 +290,7 @@ private fun ChatbotApp() {
                     },
                     actions = {
                         if (destination == AppDestination.CHAT) {
-                            IconButton(onClick = {
-                                messages.clear()
-                                appendMessage(ChatMessage(
-                                    text = "Percakapan baru. Integrasi Google AI Mode belum aktif.",
-                                    fromUser = false
-                                ))
-                            }) {
+                            IconButton(onClick = { startNewChat() }) {
                                 Icon(Icons.Filled.Edit, contentDescription = "Chat baru")
                             }
                         }
@@ -371,7 +379,20 @@ private fun ChatbotApp() {
                     items = library,
                     onDelete = { item -> library.remove(item); localStore.deleteLibraryItem(item) }
                 )
-                AppDestination.HISTORY -> HistoryScreen(Modifier.fillMaxSize())
+                AppDestination.HISTORY -> HistoryScreen(
+                    modifier = Modifier.fillMaxSize(),
+                    conversations = conversations,
+                    selectedId = currentConversationId,
+                    onSelect = { conversation -> currentConversationId = conversation.id; destination = AppDestination.CHAT },
+                    onDelete = { conversation ->
+                        localStore.deleteConversation(conversation.id)
+                        conversations.remove(conversation)
+                        if (currentConversationId == conversation.id) {
+                            if (conversations.isEmpty()) conversations.add(localStore.createConversation())
+                            currentConversationId = conversations.first().id
+                        }
+                    }
+                )
             }
             AndroidView(
                 factory = { context ->
@@ -694,19 +715,46 @@ private fun LibraryScreen(
 }
 
 @Composable
-private fun HistoryScreen(modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Filled.History, contentDescription = null, tint = Color(0xFF8D929E), modifier = Modifier.size(42.dp))
-            Spacer(Modifier.size(14.dp))
-            Text("Belum ada riwayat tersimpan", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-            Spacer(Modifier.size(6.dp))
-            Text(
-                "Penyimpanan dan pemulihan percakapan akan ditambahkan pada tahap berikutnya.",
-                color = Color(0xFF8D929E),
-                textAlign = TextAlign.Center,
-                fontSize = 13.sp
-            )
+private fun HistoryScreen(
+    modifier: Modifier = Modifier,
+    conversations: List<ChatConversation>,
+    selectedId: String,
+    onSelect: (ChatConversation) -> Unit,
+    onDelete: (ChatConversation) -> Unit
+) {
+    if (conversations.isEmpty()) {
+        Box(modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) {
+            Text("Belum ada riwayat percakapan", color = Color(0xFF8D929E))
+        }
+    } else {
+        LazyColumn(
+            modifier = modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            items(conversations, key = { it.id }) { conversation ->
+                Surface(
+                    color = if (conversation.id == selectedId) Color(0xFF30343D) else PanelBackground,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth().clickable { onSelect(conversation) }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(vertical = 6.dp)) {
+                            Text(conversation.title, maxLines = 1, fontWeight = FontWeight.Medium)
+                            Text(
+                                java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(conversation.updatedAt)),
+                                color = Color(0xFF8D929E), fontSize = 11.sp
+                            )
+                        }
+                        IconButton(onClick = { onDelete(conversation) }) {
+                            Icon(Icons.Filled.DeleteOutline, contentDescription = "Hapus percakapan")
+                        }
+                    }
+                }
+            }
         }
     }
 }
