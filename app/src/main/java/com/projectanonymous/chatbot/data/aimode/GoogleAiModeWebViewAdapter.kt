@@ -134,11 +134,13 @@ class GoogleAiModeWebViewAdapter(
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
                     lastUrl = url
-                    if (url.startsWith("https://www.google.", true) ||
-                        url.startsWith("https://google.", true) ||
-                        url.contains("accounts.google.com", true)
+                    if (url.contains("accounts.google.com", ignoreCase = true)) {
+                        onProgress("Login Google diperlukan. Selesaikan login di halaman browser ini…")
+                        schedulePoll?.invoke(1_200L)
+                    } else if (url.startsWith("https://www.google.", true) ||
+                        url.startsWith("https://google.", true)
                     ) {
-                        onProgress("Membaca halaman Google…")
+                        onProgress("Membaca halaman Google AI Mode…")
                         schedulePoll?.invoke(900L)
                     }
                 }

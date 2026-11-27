@@ -324,12 +324,14 @@ private fun ChatbotApp() {
                                             showGoogleBrowser = status.startsWith("Login Google")
                                         }
                                         val answer = result.response.answer
-                                        if (answer.isNotBlank()) {
+                                        if (answer.isNotBlank() && result.response.completion == com.projectanonymous.chatbot.data.aimode.AiModeCompletion.CONFIRMED) {
                                             val sources = result.response.citations.joinToString("\n") { citation ->
                                                 "• ${citation.title} (${citation.domain})\n  ${citation.url}"
                                             }
                                             val rendered = if (sources.isNotBlank()) "$answer\n\nSumber:\n$sources" else answer
                                             messages.add(ChatMessage(text = rendered, fromUser = false))
+                                        } else if (answer.isNotBlank()) {
+                                            messages.add(ChatMessage(text = "Jawaban belum terkonfirmasi selesai. Potongan yang berhasil dibaca:\n\n$answer\n\nCoba kirim ulang untuk memperoleh hasil lengkap.", fromUser = false))
                                         } else {
                                             messages.add(ChatMessage(text = "Google belum memberikan jawaban yang dapat dibaca. Coba lagi, atau buka browser Google untuk memeriksa sesi dan halaman yang tampil.", fromUser = false))
                                         }
