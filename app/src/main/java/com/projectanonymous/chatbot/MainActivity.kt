@@ -2,6 +2,7 @@ package com.projectanonymous.chatbot
 
 import android.net.Uri
 import android.os.Bundle
+import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -40,6 +41,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DrawerValue
@@ -59,6 +61,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -72,7 +75,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import com.projectanonymous.chatbot.data.aimode.GoogleAiModeWebViewAdapter
 import java.util.UUID
 
 private val AppBackground = Color(0xFF101114)
@@ -134,6 +141,18 @@ private fun ChatbotApp() {
     var showSearch by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var showCancelInfo by remember { mutableStateOf(false) }
+    var aiModeWebView by remember { mutableStateOf<WebView?>(null) }
+    var showGoogleBrowser by remember { mutableStateOf(false) }
+    var isGenerating by remember { mutableStateOf(false) }
+    var generationStatus by remember { mutableStateOf("Siap") }
+    var activeGeneration by remember { mutableStateOf<Job?>(null) }
+
+    DisposableEffect(aiModeWebView) {
+        onDispose {
+            aiModeWebView?.stopLoading()
+            aiModeWebView?.destroy()
+        }
+    }
 
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -257,13 +276,23 @@ private fun ChatbotApp() {
             },
             containerColor = AppBackground
         ) { innerPadding ->
+            Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when (destination) {
                 AppDestination.CHAT -> ChatScreen(
-                    modifier = Modifier.padding(innerPadding),
+                    modifier = Modifier.fillMaxSize(),
                     messages = messages,
                     input = input,
                     onInputChange = { input = it },
                     pendingAttachments = pendingAttachments,
+                    isGenerating = isGenerating,
+                    generationStatus = generationStatus,
+                    onStop = {
+                        activeGeneration?.cancel()
+                        activeGeneration = null
+                        isGenerating = false
+                        showGoogleBrowser = false
+                        generationStatus = "Dibatalkan"
+                    },
                     onRemoveAttachment = { item ->
                         pendingAttachments = pendingAttachments.filterNot { it.id == item.id }
                     },
@@ -272,23 +301,88 @@ private fun ChatbotApp() {
                     onPickImage = { imagePicker.launch("image/*") },
                     onPickFile = { filePicker.launch(arrayOf("*/*")) },
                     onSend = {
-                        val text = input.trim()
-                        if (text.isNotEmpty() || pendingAttachments.isNotEmpty()) {
-                            val suffix = if (pendingAttachments.isNotEmpty()) {
-                                "\n\nLampiran: " + pendingAttachments.joinToString { it.name }
+                        val prompt = input.trim()
+                        if ((prompt.isNotEmpty() || pendingAttachments.isNotEmpty()) && !isGenerating) {
+                            val attachmentNote = if (pendingAttachments.isNotEmpty()) {
+                                "\n\nLampiran dipilih (belum diteruskan ke Google AI Mode): " + pendingAttachments.joinToString { it.name }
                             } else ""
-                            messages.add(ChatMessage(text = text + suffix, fromUser = true))
+                            messages.add(ChatMessage(text = prompt + attachmentNote, fromUser = true))
                             input = ""
                             pendingAttachments = emptyList()
+                            val currentWebView = aiModeWebView
+                            if (prompt.isBlank()) {
+                                messages.add(ChatMessage(text = "Tulis pertanyaan agar Google AI Mode dapat memprosesnya. Lampiran saja belum didukung.", fromUser = false))
+                            } else if (currentWebView == null) {
+                                messages.add(ChatMessage(text = "Browser belum siap. Coba kirim ulang sebentar lagi.", fromUser = false))
+                            } else {
+                                isGenerating = true
+                                generationStatus = "Menghubungkan ke Google AI Mode…"
+                                activeGeneration = scope.launch {
+                                    try {
+                                        val result = GoogleAiModeWebViewAdapter().ask(currentWebView, prompt) { status ->
+                                            generationStatus = status
+                                            showGoogleBrowser = status.startsWith("Login Google")
+                                        }
+                                        val answer = result.response.answer
+                                        if (answer.isNotBlank()) {
+                                            val sources = result.response.citations.joinToString("\n") { citation ->
+                                                "• ${citation.title} (${citation.domain})\n  ${citation.url}"
+                                            }
+                                            val rendered = if (sources.isNotBlank()) "$answer\n\nSumber:\n$sources" else answer
+                                            messages.add(ChatMessage(text = rendered, fromUser = false))
+                                        } else {
+                                            messages.add(ChatMessage(text = "Google belum memberikan jawaban yang dapat dibaca. Coba lagi, atau buka browser Google untuk memeriksa sesi dan halaman yang tampil.", fromUser = false))
+                                        }
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (error: Exception) {
+                                        messages.add(ChatMessage(text = "Gagal mengambil jawaban: ${error.message ?: "kesalahan tidak diketahui"}", fromUser = false))
+                                    } finally {
+                                        isGenerating = false
+                                        activeGeneration = null
+                                        showGoogleBrowser = false
+                                        generationStatus = "Siap"
+                                    }
+                                }
+                            }
                         }
                     }
                 )
                 AppDestination.LIBRARY -> LibraryScreen(
-                    modifier = Modifier.padding(innerPadding),
+                    modifier = Modifier.fillMaxSize(),
                     items = library,
                     onDelete = { item -> library.remove(item) }
                 )
-                AppDestination.HISTORY -> HistoryScreen(Modifier.padding(innerPadding))
+                AppDestination.HISTORY -> HistoryScreen(Modifier.fillMaxSize())
+            }
+            AndroidView(
+                factory = { context ->
+                    WebView(context).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.allowFileAccess = false
+                        settings.javaScriptCanOpenWindowsAutomatically = false
+                        webViewClient = android.webkit.WebViewClient()
+                        aiModeWebView = this
+                        loadUrl("https://www.google.com/")
+                    }
+                },
+                modifier = if (showGoogleBrowser) Modifier.fillMaxSize() else Modifier.size(1.dp),
+                update = { aiModeWebView = it }
+            )
+            if (showGoogleBrowser) {
+                Surface(
+                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth(),
+                    color = PanelBackground
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                        IconButton(onClick = { showGoogleBrowser = false }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Kembali ke chat")
+                        }
+                        Text("Selesaikan login Google di sini, lalu kembali ke chat.", fontSize = 12.sp, color = Color.White)
+                    }
+                }
+            }
             }
         }
     }
@@ -336,6 +430,9 @@ private fun ChatScreen(
     input: String,
     onInputChange: (String) -> Unit,
     pendingAttachments: List<LibraryItem>,
+    isGenerating: Boolean,
+    generationStatus: String,
+    onStop: () -> Unit,
     onRemoveAttachment: (LibraryItem) -> Unit,
     attachmentMenu: Boolean,
     onAttachmentMenuChange: (Boolean) -> Unit,
@@ -349,8 +446,8 @@ private fun ChatScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(
-                "Mode demo · Google AI Mode belum terhubung",
-                color = Color(0xFFE6C98B),
+                if (isGenerating) generationStatus else "Google AI Mode · koneksi tidak resmi",
+                color = if (isGenerating) Color(0xFFE6C98B) else Color(0xFFB8BEC9),
                 fontSize = 12.sp,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp)
             )
@@ -485,17 +582,17 @@ private fun ChatScreen(
                 Text("Library tersedia dari menu utama", color = Color(0xFF777C87), fontSize = 11.sp)
                 Spacer(Modifier.weight(1f))
                 IconButton(
-                    onClick = onSend,
-                    enabled = input.isNotBlank() || pendingAttachments.isNotEmpty(),
+                    onClick = { if (isGenerating) onStop() else onSend() },
+                    enabled = isGenerating || input.isNotBlank() || pendingAttachments.isNotEmpty(),
                     modifier = Modifier.size(42.dp).background(
                         if (input.isNotBlank() || pendingAttachments.isNotEmpty()) Accent else Color(0xFF3B3E46),
                         CircleShape
                     )
                 ) {
                     Icon(
-                        Icons.Filled.Send,
-                        contentDescription = "Kirim pesan",
-                        tint = if (input.isNotBlank() || pendingAttachments.isNotEmpty()) Color(0xFF17191D) else Color(0xFF858A95)
+                        if (isGenerating) Icons.Filled.Stop else Icons.Filled.Send,
+                        contentDescription = if (isGenerating) "Hentikan proses" else "Kirim pesan",
+                        tint = if (isGenerating || input.isNotBlank() || pendingAttachments.isNotEmpty()) Color(0xFF17191D) else Color(0xFF858A95)
                     )
                 }
             }
