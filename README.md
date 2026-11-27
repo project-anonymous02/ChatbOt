@@ -1,70 +1,31 @@
 # ChatbOt
 
-A native Android chat client designed around Google AI Mode, with a ChatGPT-inspired conversation interface, attachments, and a personal Library.
+A native Android chat client prototype for exploring a Google AI Mode-backed chat experience.
 
-> **Development status:** early UI foundation (0.1.0). Google AI Mode is not connected yet. The current app is a local UI prototype and does not send prompts to Google or generate AI answers.
+## Current status
 
-## Current foundation
-
-- Kotlin + Jetpack Compose + Material 3.
-- Dark chat interface with a message composer.
-- Navigation drawer with Chat, Library, and History destinations.
+- Jetpack Compose chat UI with a dark theme and vector icons.
 - Image and document pickers.
-- Temporary in-memory attachment list.
-- Vector Material icons; no emoji-based interface icons.
-- Explicit UI status explaining that the AI adapter is not connected.
+- In-session attachment Library.
+- Initial HTML response parser for rendered AI Mode snapshots.
+- Parser unit tests for answer extraction, citation deduplication, Google redirect unwrapping, unsafe URL schemes, and completion-marker handling.
 
-## Planned architecture
+## Important limitations
 
-```text
-Android app
-  ├── Chat UI / Composer
-  ├── Conversation & History store
-  ├── Attachment picker / Library
-  └── ChatRepository interface
-          |
-          v
-Google AI Mode adapter (planned)
-  ├── Browser session lifecycle
-  ├── Prompt submission
-  ├── Response completion detection
-  ├── Answer + citation extraction
-  └── Error / timeout / cancellation handling
-```
+The app does **not** currently connect to Google AI Mode or generate live AI answers. The parser is a standalone component awaiting a browser/session adapter. Google does not provide a public, stable AI Mode API for this integration, and browser DOM selectors can change without notice. A parsed answer is not considered complete unless a completion marker is detected; even that marker is a compatibility hint, not a universal guarantee.
 
-The parser research references are:
-
-- [MEOMcGill/aiscrape](https://github.com/MEOMcGill/aiscrape) — AI Mode DOM inspection, answer extraction, and citations. Its PolyForm Noncommercial license must be respected; this repository is a reference for research, not copied source.
-- [Dark2C/Google-AI-Mode-API-Wrapper](https://github.com/Dark2C/Google-AI-Mode-API-Wrapper) — browser-driven chat lifecycle and completion detection. Its selectors are implementation-specific and must be revalidated.
-- [MatrixAges/ai-mode-copy](https://github.com/MatrixAges/ai-mode-copy) — response extraction and HTML-to-Markdown presentation.
-
-Google AI Mode has no official public API contract for this integration. Browser automation can break when Google changes its UI, and may encounter consent, sign-in, availability, or rate-limit restrictions. The implementation must use an authorized user session and must not bypass CAPTCHA or access controls.
+The parser's selector strategy was informed by public projects:
+- [MEOMcGill/aiscrape](https://github.com/MEOMcGill/aiscrape) — research reference only. Its PolyForm Noncommercial license means its source is not copied into this MIT-licensed project.
+- [Dark2C/Google-AI-Mode-API-Wrapper](https://github.com/Dark2C/Google-AI-Mode-API-Wrapper) — selector and lifecycle design reference only; its selectors are not treated as verified current Google DOM.
+- [MatrixAges/ai-mode-copy](https://github.com/MatrixAges/ai-mode-copy) — response extraction concept reference.
 
 ## Build
 
-Requirements:
-- Android Studio with Android SDK 35.
-- JDK 17.
-- Gradle 8.10.2 or compatible Android Studio-managed Gradle installation.
+Open the project in Android Studio with JDK 17 and Android SDK 35, or run:
 
-Open this repository in Android Studio and sync the Gradle project. To build from a shell with Gradle installed:
-
-```bash
+\`\`\`bash
+gradle :app:testDebugUnitTest
 gradle :app:assembleDebug
-```
+\`\`\`
 
-## Roadmap
-
-- [x] Public repository and Android Compose project foundation.
-- [x] Initial chat, attachment, Library, and History UI.
-- [ ] Persistent conversations and Library storage.
-- [ ] Chat repository abstraction and streaming state model.
-- [ ] Google AI Mode browser adapter.
-- [ ] Robust DOM probing and parser tests.
-- [ ] Citation rendering and Markdown response renderer.
-- [ ] Cancel/stop request lifecycle.
-- [ ] Device and accessibility testing.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+A successful CI build has not yet been established.
