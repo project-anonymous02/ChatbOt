@@ -6,7 +6,6 @@ import android.os.Looper
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -61,6 +60,7 @@ class GoogleAiModeWebViewAdapter(
             fun finish(result: AiModeWebResult) {
                 if (finished.compareAndSet(false, true)) {
                     pollTask?.let(handler::removeCallbacks)
+                    handler.removeCallbacks(timeoutTask)
                     if (continuation.isActive) continuation.resume(result)
                 }
             }
@@ -68,25 +68,13 @@ class GoogleAiModeWebViewAdapter(
             fun fail(error: Throwable) {
                 if (finished.compareAndSet(false, true)) {
                     pollTask?.let(handler::removeCallbacks)
+                    handler.removeCallbacks(timeoutTask)
                     if (continuation.isActive) continuation.resumeWithException(error)
                 }
             }
 
-            fun schedulePoll(delay: Long = pollIntervalMillis) {
-                if (finished.get()) return
-                val task = Runnable { poll() }
-                pollTask = task
-                handler.postDelayed(task, delay)
-            }
-
             fun poll() {
                 if (finished.get()) return
-                if (System.currentTimeMillis() - startedAt >= timeoutMillis) {
-                    val partial = parser.parse(lastHtml, prompt)
-                    finish(AiModeWebResult(partial, lastUrl, System.currentTimeMillis() - startedAt))
-                    return
-                }
-
                 val script = """
                     (function() {
                       const root = document.querySelector('#cnt');
@@ -95,7 +83,6 @@ class GoogleAiModeWebViewAdapter(
                         html: root ? root.innerHTML : '',
                         url: location.href,
                         blocked: body.includes('unusual traffic') || location.pathname.includes('/sorry/'),
-                        signIn: /accounts\\.google\\.com/.test(location.hostname),
                         marker: !!(root && root.querySelector('.v4bSkd'))
                       });
                     })();
@@ -114,7 +101,9 @@ class GoogleAiModeWebViewAdapter(
                         }
                         lastHtml = snapshot.optString("html", "")
                         val parsed = parser.parse(lastHtml, prompt)
-                        if (snapshot.optBoolean("marker") && parsed.hasAnswer) {
+                        if (snapshot.optBoolean("marker") && parsed.hasAnswer &&
+                            parsed.completion == AiModeCompletion.CONFIRMED
+                        ) {
                             finish(AiModeWebResult(parsed, lastUrl, System.currentTimeMillis() - startedAt))
                         } else {
                             onProgress(if (parsed.hasAnswer) "Menerima jawaban…" else "Menunggu jawaban Google AI Mode…")
@@ -126,18 +115,28 @@ class GoogleAiModeWebViewAdapter(
                 }
             }
 
+            fun schedulePoll(delay: Long = pollIntervalMillis) {
+                if (finished.get()) return
+                val task = Runnable { poll() }
+                pollTask = task
+                handler.postDelayed(task, delay)
+            }
+
+            val timeoutTask = Runnable {
+                val partial = parser.parse(lastHtml, prompt)
+                finish(AiModeWebResult(partial, lastUrl, System.currentTimeMillis() - startedAt))
+            }
+
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
                     lastUrl = url
                     if (url.startsWith("https://www.google.", ignoreCase = true) ||
-                        url.startsWith("https://google.", ignoreCase = true)
+                        url.startsWith("https://google.", ignoreCase = true) ||
+                        url.contains("accounts.google.com", ignoreCase = true)
                     ) {
-                        onProgress("Membaca jawaban Google AI Mode…")
+                        onProgress("Membaca halaman Google…")
                         schedulePoll(900L)
-                    } else if (url.contains("accounts.google.com", ignoreCase = true)) {
-                        onProgress("Login Google diperlukan di sesi browser.")
-                        schedulePoll(1_500L)
                     }
                 }
 
@@ -157,11 +156,13 @@ class GoogleAiModeWebViewAdapter(
                 handler.post {
                     if (finished.compareAndSet(false, true)) {
                         pollTask?.let(handler::removeCallbacks)
+                        handler.removeCallbacks(timeoutTask)
                         webView.stopLoading()
                     }
                 }
             }
 
+            handler.postDelayed(timeoutTask, timeoutMillis)
             onProgress("Mengirim pertanyaan ke Google AI Mode…")
             webView.loadUrl(buildSearchUrl(prompt))
         }
