@@ -87,7 +87,7 @@ class AiModeResponseParser {
             .filter { it.isNotEmpty() }
             .toMutableList()
 
-        while (lines.firstOrNull()?.lowercase(Locale.ROOT) in LEADING_CHROME) {
+        while (lines.firstOrNull()?.lowercase(Locale.ROOT)?.let { it in LEADING_CHROME } == true) {
             lines.removeAt(0)
         }
 
@@ -109,7 +109,7 @@ class AiModeResponseParser {
             }
         }
 
-        while (lines.lastOrNull()?.lowercase(Locale.ROOT) in TRAILING_UI) {
+        while (lines.lastOrNull()?.lowercase(Locale.ROOT)?.let { it in TRAILING_UI } == true) {
             lines.removeAt(lines.lastIndex)
         }
 
