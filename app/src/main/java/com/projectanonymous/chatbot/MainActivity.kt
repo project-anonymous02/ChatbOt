@@ -40,7 +40,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.SmartToy
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DrawerValue
@@ -59,8 +58,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDrawerState
-import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -278,7 +275,7 @@ private fun ChatbotApp() {
                         val text = input.trim()
                         if (text.isNotEmpty() || pendingAttachments.isNotEmpty()) {
                             val suffix = if (pendingAttachments.isNotEmpty()) {
-                                "\\n\\nLampiran: " + pendingAttachments.joinToString { it.name }
+                                "\n\nLampiran: " + pendingAttachments.joinToString { it.name }
                             } else ""
                             messages.add(ChatMessage(text = text + suffix, fromUser = true))
                             input = ""
