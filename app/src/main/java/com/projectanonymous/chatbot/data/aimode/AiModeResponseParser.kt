@@ -82,12 +82,14 @@ class AiModeResponseParser {
                 "svg, [aria-hidden=true], .ZFcyjd, .DBd2Wb"
         ).remove()
 
-        val lines = clean.text().split(Regex("\\s*\\n\\s*"))
+        clean.select("br").append("\n")
+        clean.select("p, li, h1, h2, h3, h4, blockquote, pre").append("\n")
+        val lines = clean.wholeText().split('\n')
             .map { it.replace(WHITESPACE, " ").trim() }
             .filter { it.isNotEmpty() }
             .toMutableList()
 
-        while (lines.firstOrNull()?.lowercase(Locale.ROOT)?.let { it in LEADING_CHROME } == true) {
+        while (lines.firstOrNull()?.lowercase(Locale.ROOT) in LEADING_CHROME) {
             lines.removeAt(0)
         }
 
@@ -104,12 +106,18 @@ class AiModeResponseParser {
             }
         }
         if (disclaimerIndex >= 0) {
+            val line = lines[disclaimerIndex]
+            val markerIndex = TRAILING_CHROME.mapNotNull { marker ->
+                line.indexOf(marker, ignoreCase = true).takeIf { it >= 0 }
+            }.minOrNull() ?: line.length
+            val answerPrefix = line.substring(0, markerIndex).trim()
             while (lines.size > disclaimerIndex) {
                 lines.removeAt(lines.lastIndex)
             }
+            if (answerPrefix.isNotEmpty()) lines.add(answerPrefix)
         }
 
-        while (lines.lastOrNull()?.lowercase(Locale.ROOT)?.let { it in TRAILING_UI } == true) {
+        while (lines.lastOrNull()?.lowercase(Locale.ROOT) in TRAILING_UI) {
             lines.removeAt(lines.lastIndex)
         }
 
