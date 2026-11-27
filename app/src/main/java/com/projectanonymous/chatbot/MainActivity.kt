@@ -158,7 +158,7 @@ private fun ChatbotApp() {
         drawerState = drawerState,
         drawerContent = {
             Surface(
-                modifier = Modifier.fillMaxSize(0.82f),
+                modifier = Modifier.fillMaxSize(),
                 color = PanelBackground
             ) {
                 Column(
