@@ -56,11 +56,13 @@ class GoogleAiModeWebViewAdapter(
             var lastHtml = ""
             var lastUrl = ""
             var pollTask: Runnable? = null
+            var timeoutTask: Runnable? = null
+            lateinit var poll: () -> Unit
 
             fun finish(result: AiModeWebResult) {
                 if (finished.compareAndSet(false, true)) {
                     pollTask?.let(handler::removeCallbacks)
-                    handler.removeCallbacks(timeoutTask)
+                    timeoutTask?.let(handler::removeCallbacks)
                     if (continuation.isActive) continuation.resume(result)
                 }
             }
@@ -68,50 +70,8 @@ class GoogleAiModeWebViewAdapter(
             fun fail(error: Throwable) {
                 if (finished.compareAndSet(false, true)) {
                     pollTask?.let(handler::removeCallbacks)
-                    handler.removeCallbacks(timeoutTask)
+                    timeoutTask?.let(handler::removeCallbacks)
                     if (continuation.isActive) continuation.resumeWithException(error)
-                }
-            }
-
-            fun poll() {
-                if (finished.get()) return
-                val script = """
-                    (function() {
-                      const root = document.querySelector('#cnt');
-                      const body = (document.body && document.body.innerText || '').toLowerCase();
-                      return JSON.stringify({
-                        html: root ? root.innerHTML : '',
-                        url: location.href,
-                        blocked: body.includes('unusual traffic') || location.pathname.includes('/sorry/'),
-                        marker: !!(root && root.querySelector('.v4bSkd'))
-                      });
-                    })();
-                """.trimIndent()
-
-                webView.evaluateJavascript(script) { raw ->
-                    if (finished.get()) return@evaluateJavascript
-                    try {
-                        val decoded = JSONTokener(raw ?: "null").nextValue() as? String
-                            ?: throw AiModeWebException("Google belum memberikan dokumen yang dapat dibaca.")
-                        val snapshot = JSONObject(decoded)
-                        lastUrl = snapshot.optString("url", webView.url.orEmpty())
-                        if (snapshot.optBoolean("blocked")) {
-                            fail(AiModeWebException("Google menampilkan halaman pembatasan atau verifikasi. Selesaikan langsung di browser Google, lalu coba lagi."))
-                            return@evaluateJavascript
-                        }
-                        lastHtml = snapshot.optString("html", "")
-                        val parsed = parser.parse(lastHtml, prompt)
-                        if (snapshot.optBoolean("marker") && parsed.hasAnswer &&
-                            parsed.completion == AiModeCompletion.CONFIRMED
-                        ) {
-                            finish(AiModeWebResult(parsed, lastUrl, System.currentTimeMillis() - startedAt))
-                        } else {
-                            onProgress(if (parsed.hasAnswer) "Menerima jawaban…" else "Menunggu jawaban Google AI Mode…")
-                            schedulePoll()
-                        }
-                    } catch (error: Throwable) {
-                        fail(error)
-                    }
                 }
             }
 
@@ -122,7 +82,50 @@ class GoogleAiModeWebViewAdapter(
                 handler.postDelayed(task, delay)
             }
 
-            val timeoutTask = Runnable {
+            poll = {
+                if (!finished.get()) {
+                    val script = """
+                        (function() {
+                          const root = document.querySelector('#cnt');
+                          const body = (document.body && document.body.innerText || '').toLowerCase();
+                          return JSON.stringify({
+                            html: root ? root.innerHTML : '',
+                            url: location.href,
+                            blocked: body.includes('unusual traffic') || location.pathname.includes('/sorry/'),
+                            marker: !!(root && root.querySelector('.v4bSkd'))
+                          });
+                        })();
+                    """.trimIndent()
+
+                    webView.evaluateJavascript(script) { raw ->
+                        if (finished.get()) return@evaluateJavascript
+                        try {
+                            val decoded = JSONTokener(raw ?: "null").nextValue() as? String
+                                ?: throw AiModeWebException("Google belum memberikan dokumen yang dapat dibaca.")
+                            val snapshot = JSONObject(decoded)
+                            lastUrl = snapshot.optString("url", webView.url.orEmpty())
+                            if (snapshot.optBoolean("blocked")) {
+                                fail(AiModeWebException("Google menampilkan halaman pembatasan atau verifikasi. Selesaikan langsung di browser Google, lalu coba lagi."))
+                                return@evaluateJavascript
+                            }
+                            lastHtml = snapshot.optString("html", "")
+                            val parsed = parser.parse(lastHtml, prompt)
+                            if (snapshot.optBoolean("marker") && parsed.hasAnswer &&
+                                parsed.completion == AiModeCompletion.CONFIRMED
+                            ) {
+                                finish(AiModeWebResult(parsed, lastUrl, System.currentTimeMillis() - startedAt))
+                            } else {
+                                onProgress(if (parsed.hasAnswer) "Menerima jawaban…" else "Menunggu jawaban Google AI Mode…")
+                                schedulePoll()
+                            }
+                        } catch (error: Throwable) {
+                            fail(error)
+                        }
+                    }
+                }
+            }
+
+            timeoutTask = Runnable {
                 val partial = parser.parse(lastHtml, prompt)
                 finish(AiModeWebResult(partial, lastUrl, System.currentTimeMillis() - startedAt))
             }
@@ -156,13 +159,13 @@ class GoogleAiModeWebViewAdapter(
                 handler.post {
                     if (finished.compareAndSet(false, true)) {
                         pollTask?.let(handler::removeCallbacks)
-                        handler.removeCallbacks(timeoutTask)
+                        timeoutTask?.let(handler::removeCallbacks)
                         webView.stopLoading()
                     }
                 }
             }
 
-            handler.postDelayed(timeoutTask, timeoutMillis)
+            handler.postDelayed(timeoutTask!!, timeoutMillis)
             onProgress("Mengirim pertanyaan ke Google AI Mode…")
             webView.loadUrl(buildSearchUrl(prompt))
         }
